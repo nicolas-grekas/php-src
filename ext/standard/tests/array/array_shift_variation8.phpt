@@ -37,7 +37,6 @@ echo "Done";
 
 -- Reference result of array_shift: --
 
-Notice: Only variables should be assigned by reference in %s on line %d
 a = 1, b = 2
 
 -- Reference first element before array_shift: --

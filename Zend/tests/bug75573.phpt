@@ -48,7 +48,6 @@ var_dump($b->name);
 var_dump($b->settings);
 ?>
 --EXPECTF--
-Notice: Only variable references should be returned by reference in %s on line %d
 string(3) "abc"
 array(2) {
   ["foo"]=>

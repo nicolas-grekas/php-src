@@ -30,13 +30,11 @@ echo 'Done' . PHP_EOL;
     <getMessage>
     </getMessage:'I should be observable'>
 
-Notice: Only variable references should be returned by reference in %s on line %d
   </foo:'I should be observable'>
   <foo>
     <getMessage>
     </getMessage:'I should be observable'>
 
-Notice: Only variable references should be returned by reference in %s on line %d
   </foo:'I should be observable'>
 Done
 </file '%s/observer_retval_by_ref_%d.php'>

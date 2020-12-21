@@ -20,10 +20,8 @@ test();
 
 ?>
 --EXPECTF--
-Notice: Only variable references should be returned by reference in %sclosure_019.php on line 4
 int(9)
 
-Notice: Only variable references should be returned by reference in %sclosure_019.php on line 4
 int(81)
 
 Fatal error: Uncaught Error: {closure}(): Argument #1 ($x) cannot be passed by reference in %s:%d

@@ -13,7 +13,6 @@ var_dump($obj);
 
 ?>
 --EXPECTF--
-Notice: Only variables should be assigned by reference in %s on line %d
 object(stdClass)#1 (1) {
   ["prop"]=>
   NULL

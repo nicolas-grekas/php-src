@@ -24,11 +24,9 @@ echo 'Done' . PHP_EOL;
   <!-- init foo() -->
   <foo>
 
-Notice: Only variable references should be returned by reference in %s on line %d
   </foo:'I should be observable'>
   <foo>
 
-Notice: Only variable references should be returned by reference in %s on line %d
   </foo:'I should be observable'>
 Done
 </file '%s/observer_retval_by_ref_%d.php'>

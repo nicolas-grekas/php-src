@@ -12,7 +12,6 @@ var_dump($x, $y);
 
 ?>
 --EXPECTF--
-Notice: Only variables should be assigned by reference in %s on line %d
 array(1) {
   [0]=>
   int(0)

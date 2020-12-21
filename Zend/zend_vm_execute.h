@@ -4179,9 +4179,6 @@ static ZEND_VM_COLD ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_RETURN_BY_REF_SPE
 	do {
 		if ((IS_CONST & (IS_CONST|IS_TMP_VAR)) ||
 		    (IS_CONST == IS_VAR && opline->extended_value == ZEND_RETURNS_VALUE)) {
-			/* Not supposed to happen, but we'll allow it */
-			zend_error(E_NOTICE, "Only variable references should be returned by reference");
-
 			retval_ptr = RT_CONSTANT(opline, opline->op1);
 			if (!return_value) {
 
@@ -4204,7 +4201,6 @@ static ZEND_VM_COLD ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_RETURN_BY_REF_SPE
 		if (IS_CONST == IS_VAR) {
 			ZEND_ASSERT(retval_ptr != &EG(uninitialized_zval));
 			if (opline->extended_value == ZEND_RETURNS_FUNCTION && !Z_ISREF_P(retval_ptr)) {
-				zend_error(E_NOTICE, "Only variable references should be returned by reference");
 				if (return_value) {
 					ZVAL_NEW_REF(return_value, retval_ptr);
 				} else {
@@ -4243,9 +4239,6 @@ static ZEND_VM_COLD ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_RETURN_BY_REF_SPE
 	do {
 		if ((opline->op1_type & (IS_CONST|IS_TMP_VAR)) ||
 		    (opline->op1_type == IS_VAR && opline->extended_value == ZEND_RETURNS_VALUE)) {
-			/* Not supposed to happen, but we'll allow it */
-			zend_error(E_NOTICE, "Only variable references should be returned by reference");
-
 			retval_ptr = get_zval_ptr(opline->op1_type, opline->op1, BP_VAR_R);
 			if (!return_value) {
 				FREE_OP(opline->op1_type, opline->op1.var);
@@ -4268,7 +4261,6 @@ static ZEND_VM_COLD ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_RETURN_BY_REF_SPE
 		if (opline->op1_type == IS_VAR) {
 			ZEND_ASSERT(retval_ptr != &EG(uninitialized_zval));
 			if (opline->extended_value == ZEND_RETURNS_FUNCTION && !Z_ISREF_P(retval_ptr)) {
-				zend_error(E_NOTICE, "Only variable references should be returned by reference");
 				if (return_value) {
 					ZVAL_NEW_REF(return_value, retval_ptr);
 				} else {
@@ -18623,9 +18615,6 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_RETURN_BY_REF_SPEC_TMP_HANDLER
 	do {
 		if ((IS_TMP_VAR & (IS_CONST|IS_TMP_VAR)) ||
 		    (IS_TMP_VAR == IS_VAR && opline->extended_value == ZEND_RETURNS_VALUE)) {
-			/* Not supposed to happen, but we'll allow it */
-			zend_error(E_NOTICE, "Only variable references should be returned by reference");
-
 			retval_ptr = _get_zval_ptr_tmp(opline->op1.var EXECUTE_DATA_CC);
 			if (!return_value) {
 				zval_ptr_dtor_nogc(EX_VAR(opline->op1.var));
@@ -18648,7 +18637,6 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_RETURN_BY_REF_SPEC_TMP_HANDLER
 		if (IS_TMP_VAR == IS_VAR) {
 			ZEND_ASSERT(retval_ptr != &EG(uninitialized_zval));
 			if (opline->extended_value == ZEND_RETURNS_FUNCTION && !Z_ISREF_P(retval_ptr)) {
-				zend_error(E_NOTICE, "Only variable references should be returned by reference");
 				if (return_value) {
 					ZVAL_NEW_REF(return_value, retval_ptr);
 				} else {
@@ -21195,9 +21183,6 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_RETURN_BY_REF_SPEC_VAR_HANDLER
 	do {
 		if ((IS_VAR & (IS_CONST|IS_TMP_VAR)) ||
 		    (IS_VAR == IS_VAR && opline->extended_value == ZEND_RETURNS_VALUE)) {
-			/* Not supposed to happen, but we'll allow it */
-			zend_error(E_NOTICE, "Only variable references should be returned by reference");
-
 			retval_ptr = _get_zval_ptr_var(opline->op1.var EXECUTE_DATA_CC);
 			if (!return_value) {
 				zval_ptr_dtor_nogc(EX_VAR(opline->op1.var));
@@ -21220,7 +21205,6 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_RETURN_BY_REF_SPEC_VAR_HANDLER
 		if (IS_VAR == IS_VAR) {
 			ZEND_ASSERT(retval_ptr != &EG(uninitialized_zval));
 			if (opline->extended_value == ZEND_RETURNS_FUNCTION && !Z_ISREF_P(retval_ptr)) {
-				zend_error(E_NOTICE, "Only variable references should be returned by reference");
 				if (return_value) {
 					ZVAL_NEW_REF(return_value, retval_ptr);
 				} else {
@@ -37733,9 +37717,6 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_RETURN_BY_REF_SPEC_CV_HANDLER(
 	do {
 		if ((IS_CV & (IS_CONST|IS_TMP_VAR)) ||
 		    (IS_CV == IS_VAR && opline->extended_value == ZEND_RETURNS_VALUE)) {
-			/* Not supposed to happen, but we'll allow it */
-			zend_error(E_NOTICE, "Only variable references should be returned by reference");
-
 			retval_ptr = _get_zval_ptr_cv_BP_VAR_R(opline->op1.var EXECUTE_DATA_CC);
 			if (!return_value) {
 
@@ -37758,7 +37739,6 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_RETURN_BY_REF_SPEC_CV_HANDLER(
 		if (IS_CV == IS_VAR) {
 			ZEND_ASSERT(retval_ptr != &EG(uninitialized_zval));
 			if (opline->extended_value == ZEND_RETURNS_FUNCTION && !Z_ISREF_P(retval_ptr)) {
-				zend_error(E_NOTICE, "Only variable references should be returned by reference");
 				if (return_value) {
 					ZVAL_NEW_REF(return_value, retval_ptr);
 				} else {

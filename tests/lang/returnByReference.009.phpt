@@ -33,7 +33,6 @@ var_dump (testReturnValByRef());
 ---> 1. Return a variable by reference -> No warning:
 int(1)
 
----> 2. Return a value by reference -> Warning:
+---> 2. Return a value by reference -> No warning:
 
-Notice: Only variable references should be returned by reference in %s on line %d
 int(1)

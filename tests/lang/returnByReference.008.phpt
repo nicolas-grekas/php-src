@@ -46,13 +46,11 @@ var_dump($a, $b);
 --EXPECTF--
 ---> 1. Via a return by ref function call, assign by reference the return value of a function that returns by value:
 
-Notice: Only variable references should be returned by reference in %s on line 16
 int(5)
 int(100)
 
 ---> 2. Via a return by ref function call, assign by reference the return value of a function that returns a constant by ref:
 
-Notice: Only variable references should be returned by reference in %s on line 8
 int(5)
 int(100)
 
