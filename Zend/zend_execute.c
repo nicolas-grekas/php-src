@@ -571,11 +571,6 @@ static zend_never_inline zval* zend_assign_to_typed_property_reference(zend_prop
 
 static zend_never_inline ZEND_COLD bool zend_wrong_assign_to_variable_reference(zval *variable_ptr, zval *value_ptr OPLINE_DC EXECUTE_DATA_DC)
 {
-	zend_error(E_NOTICE, "Only variables should be assigned by reference");
-	if (UNEXPECTED(EG(exception) != NULL)) {
-		return 0;
-	}
-
 	/* Use IS_TMP_VAR instead of IS_VAR to avoid ISREF check */
 	Z_TRY_ADDREF_P(value_ptr);
 	value_ptr = zend_assign_to_variable(variable_ptr, value_ptr, IS_TMP_VAR, EX_USES_STRICT_TYPES());

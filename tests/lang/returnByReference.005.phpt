@@ -42,13 +42,11 @@ var_dump($a, $b);
 --EXPECTF--
 ---> 1. Trying to assign by reference the return value of a function that returns by value:
 
-Notice: Only variables should be assigned by reference in %s on line 20
 int(5)
 int(100)
 
 ---> 2. Trying to assign by reference the return value of a function that returns a constant by ref:
 
-Notice: Only variable references should be returned by reference in %s on line 8
 int(5)
 int(100)
 

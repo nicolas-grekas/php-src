@@ -1,5 +1,5 @@
 --TEST--
-Bug #69419: Returning compatible sub generator produces a warning
+Bug #69419: Returning compatible sub generator produces no warning
 --FILE--
 <?php
 
@@ -18,5 +18,4 @@ foreach(genRefOuter() as $i) {
 
 ?>
 --EXPECTF--
-Notice: Only variable references should be returned by reference in %s on line %d
 int(1)

@@ -26,13 +26,11 @@ function fubar($text){
 }
 ?>
 --EXPECTF--
-Notice: Only variables should be assigned by reference in %sbug21600.php on line 4
 array(1) {
   ["foo"]=>
   string(4) "test"
 }
 
-Notice: Only variables should be assigned by reference in %sbug21600.php on line 11
 array(1) {
   ["foo"]=>
   string(4) "test"
