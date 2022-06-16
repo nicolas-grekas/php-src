@@ -32,6 +32,6 @@ try {
 
 ?>
 --EXPECT--
-Cannot unset readonly property Foo::$name
-Cannot unset readonly property IntFoo::$name
-Cannot unset readonly property IntFoo::$value
+Cannot unset readonly property Foo::$name from global scope
+Cannot unset readonly property IntFoo::$name from global scope
+Cannot unset readonly property IntFoo::$value from global scope

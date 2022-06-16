@@ -306,12 +306,6 @@ static ZEND_COLD zend_never_inline void zend_readonly_property_modification_scop
 		scope ? "scope " : "global scope", scope ? ZSTR_VAL(scope->name) : "");
 }
 
-static ZEND_COLD zend_never_inline void zend_readonly_property_unset_error(
-		zend_class_entry *ce, zend_string *member) {
-	zend_throw_error(NULL, "Cannot unset readonly property %s::$%s",
-		ZSTR_VAL(ce->name), ZSTR_VAL(member));
-}
-
 static zend_always_inline uintptr_t zend_get_property_offset(zend_class_entry *ce, zend_string *member, int silent, void **cache_slot, zend_property_info **info_ptr) /* {{{ */
 {
 	zval *zv;
@@ -1115,8 +1109,8 @@ ZEND_API void zend_std_unset_property(zend_object *zobj, zend_string *name, void
 		zval *slot = OBJ_PROP(zobj, property_offset);
 
 		if (Z_TYPE_P(slot) != IS_UNDEF) {
-			if (UNEXPECTED(prop_info && (prop_info->flags & ZEND_ACC_READONLY))) {
-				zend_readonly_property_unset_error(prop_info->ce, name);
+			if (UNEXPECTED(prop_info && (prop_info->flags & ZEND_ACC_READONLY)
+					&& !verify_readonly_initialization_access(prop_info, zobj->ce, name, "unset"))) {
 				return;
 			}
 			if (UNEXPECTED(Z_ISREF_P(slot)) &&

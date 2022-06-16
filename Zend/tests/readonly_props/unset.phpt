@@ -32,11 +32,18 @@ class Test2 {
         $this->prop = 1;
         return $this->prop;
     }
+
+    public function reset() {
+        unset($this->prop);
+        $this->prop = 2;
+    }
 }
 
 $test = new Test2;
 var_dump($test->prop); // Call __get.
 var_dump($test->prop); // Don't call __get.
+$test->reset();
+var_dump($test->prop);
 try {
     unset($test->prop); // Unset initialized, illegal.
 } catch (Error $e) {
@@ -56,9 +63,10 @@ try {
 
 ?>
 --EXPECT--
-Cannot unset readonly property Test::$prop
+Cannot unset readonly property Test::$prop from global scope
 Test2::__get
 int(1)
 int(1)
-Cannot unset readonly property Test2::$prop
+int(2)
+Cannot unset readonly property Test2::$prop from global scope
 Cannot unset readonly property Test3::$prop from global scope

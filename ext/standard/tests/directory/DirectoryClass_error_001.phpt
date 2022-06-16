@@ -23,5 +23,5 @@ var_dump($d->handle);
 --EXPECTF--
 Cannot modify readonly property Directory::$handle
 resource(%d) of type (stream)
-Cannot unset readonly property Directory::$handle
+Cannot unset readonly property Directory::$handle from global scope
 resource(%d) of type (stream)
