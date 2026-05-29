@@ -934,6 +934,29 @@ try_again:
 			}
 
 			zval_ptr_dtor(&tmp_result);
+
+			/* __isset() may have materialised the property (a pattern used
+			 * by lazy proxies). Re-check the property table before deferring
+			 * to __get(), so the freshly-written value is returned directly
+			 * without a redundant __get() call (GH-12695). */
+			if (EXPECTED(IS_VALID_PROPERTY_OFFSET(property_offset))) {
+				zval *recheck = OBJ_PROP(zobj, property_offset);
+				if (Z_TYPE_P(recheck) != IS_UNDEF) {
+					retval = recheck;
+					OBJ_RELEASE(zobj);
+					goto exit;
+				}
+			} else if (IS_DYNAMIC_PROPERTY_OFFSET(property_offset)) {
+				if (zobj->properties != NULL) {
+					zval *recheck = zend_hash_find(zobj->properties, name);
+					if (recheck) {
+						retval = recheck;
+						OBJ_RELEASE(zobj);
+						goto exit;
+					}
+				}
+			}
+
 			if (zobj->ce->__get && !((*guard) & IN_GET)) {
 				goto call_getter;
 			}
@@ -2487,7 +2510,23 @@ found:
 			result = zend_is_true(&rv);
 			zval_ptr_dtor(&rv);
 			if (has_set_exists == ZEND_PROPERTY_NOT_EMPTY && result) {
-				if (EXPECTED(!EG(exception)) && zobj->ce->__get && !((*guard) & IN_GET)) {
+				/* __isset() may have materialised the property (a pattern
+				 * used by lazy proxies). Re-check the property table before
+				 * deferring to __get(), so the freshly-written value is
+				 * read directly without a redundant __get() call (GH-12695). */
+				zval *recheck = NULL;
+				if (EXPECTED(IS_VALID_PROPERTY_OFFSET(property_offset))) {
+					zval *v = OBJ_PROP(zobj, property_offset);
+					if (Z_TYPE_P(v) != IS_UNDEF) {
+						recheck = v;
+					}
+				} else if (IS_DYNAMIC_PROPERTY_OFFSET(property_offset)
+						&& zobj->properties != NULL) {
+					recheck = zend_hash_find(zobj->properties, name);
+				}
+				if (recheck) {
+					result = i_zend_is_true(recheck);
+				} else if (EXPECTED(!EG(exception)) && zobj->ce->__get && !((*guard) & IN_GET)) {
 					(*guard) |= IN_GET;
 					zend_std_call_getter(zobj, name, &rv);
 					(*guard) &= ~IN_GET;
