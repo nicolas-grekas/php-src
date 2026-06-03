@@ -32,7 +32,6 @@
 #include "SAPI.h"
 
 #include "zend_static_cache_internal.h"
-#include "zend_opcache_serializer.h"
 
 #include "opcache_arginfo.h"
 
@@ -40,7 +39,6 @@
 
 zend_class_entry *zend_opcache_static_cache_exception_ce;
 zend_class_entry *zend_opcache_static_cache_strategy_ce;
-zend_class_entry *zend_opcache_static_cache_store_type_ce;
 zend_class_entry *zend_opcache_static_cache_info_ce;
 
 static zend_class_entry *zend_opcache_static_cache_pinned_attribute_ce;
@@ -455,7 +453,6 @@ static zend_always_inline void zend_opcache_static_cache_register_classes(void)
 	zend_opcache_static_cache_pinned_attribute_ce = register_class_OPcache_PinnedStatic();
 	zend_mark_internal_attribute(zend_opcache_static_cache_pinned_attribute_ce);
 	zend_opcache_static_cache_strategy_ce = register_class_OPcache_CacheStrategy();
-	zend_opcache_static_cache_store_type_ce = register_class_OPcache_CacheStoreType();
 	zend_opcache_static_cache_volatile_static_attribute_ce = register_class_OPcache_VolatileStatic();
 	attribute = zend_mark_internal_attribute(zend_opcache_static_cache_volatile_static_attribute_ce);
 	attribute->validator = zend_opcache_static_cache_validate_volatile_static_attribute;
@@ -469,7 +466,6 @@ static zend_always_inline void zend_opcache_static_cache_reset_class_entries(voi
 {
 	zend_opcache_static_cache_exception_ce = NULL;
 	zend_opcache_static_cache_strategy_ce = NULL;
-	zend_opcache_static_cache_store_type_ce = NULL;
 	zend_opcache_static_cache_info_ce = NULL;
 	zend_opcache_static_cache_pinned_attribute_ce = NULL;
 	zend_opcache_static_cache_volatile_static_attribute_ce = NULL;
@@ -977,75 +973,6 @@ static zend_always_inline zend_result zend_opcache_static_cache_exists_api(zend_
 	zend_opcache_static_cache_restore_context(previous_context);
 
 	return SUCCESS;
-}
-
-/* Maps the internal storage value_type to the public OPcache\CacheStoreType case name. */
-static const char *zend_opcache_static_cache_store_type_case_name(uint8_t value_type)
-{
-	switch (value_type) {
-		case ZEND_OPCACHE_STATIC_CACHE_VALUE_NULL:
-		case ZEND_OPCACHE_STATIC_CACHE_VALUE_TRUE:
-		case ZEND_OPCACHE_STATIC_CACHE_VALUE_FALSE:
-		case ZEND_OPCACHE_STATIC_CACHE_VALUE_LONG:
-		case ZEND_OPCACHE_STATIC_CACHE_VALUE_DOUBLE:
-		case ZEND_OPCACHE_STATIC_CACHE_VALUE_STRING:
-			return "Scalar";
-		case ZEND_OPCACHE_STATIC_CACHE_VALUE_SERIALIZED:
-			return "PHPSerialized";
-		case ZEND_OPCACHE_STATIC_CACHE_VALUE_OPCACHE_SERIALIZED:
-			return "OPcacheSerialized";
-		case ZEND_OPCACHE_STATIC_CACHE_VALUE_SHARED_GRAPH:
-			return "SharedGraph";
-		default:
-			return "NotFound";
-	}
-}
-
-/* Surfaces how a cached value is stored, without decoding it. When $class_name is
- * given, the lookup targets the attribute-backed static-property storage key for
- * that class; otherwise it targets the explicit cache key directly. */
-static void zend_opcache_static_cache_return_store_type(
-		zval *return_value,
-		zend_opcache_static_cache_context *context,
-		zend_opcache_static_cache_kind kind,
-		zend_string *key_or_property,
-		zend_string *class_name)
-{
-	zend_opcache_static_cache_context *previous_context;
-	zend_string *lookup_key;
-	uint8_t value_type = 0;
-	bool found = false;
-
-	if (class_name != NULL) {
-		const char *prefix = kind == ZEND_OPCACHE_STATIC_CACHE_PINNED ? "pinned_static" : "volatile_static";
-		const char *class_value = ZSTR_VAL(class_name);
-		size_t class_length = ZSTR_LEN(class_name);
-
-		if (class_length > 0 && class_value[0] == '\\') {
-			class_value++;
-			class_length--;
-		}
-
-		lookup_key = zend_strpprintf(0, "%s:%.*s::$%s", prefix, (int) class_length, class_value, ZSTR_VAL(key_or_property));
-	} else {
-		lookup_key = zend_string_copy(key_or_property);
-	}
-
-	previous_context = zend_opcache_static_cache_activate_context(context);
-	if (zend_opcache_static_cache_require_available_read(false)) {
-		found = zend_opcache_static_cache_value_type_locked(lookup_key, &value_type);
-		zend_opcache_static_cache_unlock();
-	}
-	zend_opcache_static_cache_restore_context(previous_context);
-	zend_string_release(lookup_key);
-
-	ZVAL_OBJ_COPY(
-		return_value,
-		zend_enum_get_case_cstr(
-			zend_opcache_static_cache_store_type_ce,
-			found ? zend_opcache_static_cache_store_type_case_name(value_type) : "NotFound"
-		)
-	);
 }
 
 static zend_always_inline zend_result zend_opcache_static_cache_lock_api(
@@ -1797,30 +1724,6 @@ ZEND_METHOD(OPcache_VolatileCache, info)
 	zend_opcache_static_cache_restore_context(previous_context);
 }
 
-ZEND_METHOD(OPcache_VolatileCache, getCacheStoreType)
-{
-	zend_string *key_or_property, *class_name = NULL;
-
-	ZEND_PARSE_PARAMETERS_START(1, 2)
-		Z_PARAM_STR(key_or_property)
-		Z_PARAM_OPTIONAL
-		Z_PARAM_STR_OR_NULL(class_name)
-	ZEND_PARSE_PARAMETERS_END();
-
-	if (ZSTR_LEN(key_or_property) == 0) {
-		zend_argument_value_error(1, "must be a non-empty string");
-		RETURN_THROWS();
-	}
-
-	zend_opcache_static_cache_return_store_type(
-		return_value,
-		zend_opcache_static_cache_active_volatile_context(),
-		ZEND_OPCACHE_STATIC_CACHE_VOLATILE_STATIC,
-		key_or_property,
-		class_name
-	);
-}
-
 ZEND_METHOD(OPcache_PinnedCache, set)
 {
 	zend_opcache_static_cache_context *previous_context;
@@ -2345,28 +2248,4 @@ ZEND_METHOD(OPcache_PinnedCache, info)
 	previous_context = zend_opcache_static_cache_activate_context(zend_opcache_static_cache_active_pinned_context());
 	zend_opcache_static_cache_populate_info(return_value);
 	zend_opcache_static_cache_restore_context(previous_context);
-}
-
-ZEND_METHOD(OPcache_PinnedCache, getCacheStoreType)
-{
-	zend_string *key_or_property, *class_name = NULL;
-
-	ZEND_PARSE_PARAMETERS_START(1, 2)
-		Z_PARAM_STR(key_or_property)
-		Z_PARAM_OPTIONAL
-		Z_PARAM_STR_OR_NULL(class_name)
-	ZEND_PARSE_PARAMETERS_END();
-
-	if (ZSTR_LEN(key_or_property) == 0) {
-		zend_argument_value_error(1, "must be a non-empty string");
-		RETURN_THROWS();
-	}
-
-	zend_opcache_static_cache_return_store_type(
-		return_value,
-		zend_opcache_static_cache_active_pinned_context(),
-		ZEND_OPCACHE_STATIC_CACHE_PINNED,
-		key_or_property,
-		class_name
-	);
 }

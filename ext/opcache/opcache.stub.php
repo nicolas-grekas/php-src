@@ -73,15 +73,6 @@ enum CacheStrategy: int
 	case Tracking = 1;
 }
 
-enum CacheStoreType
-{
-	case NotFound;
-	case Scalar;
-	case SharedGraph;
-	case OPcacheSerialized;
-	case PHPSerialized;
-}
-
 #[\Attribute(13)] /* TARGET_CLASS | TARGET_METHOD | TARGET_PROPERTY */
 final class VolatileStatic
 {
@@ -117,8 +108,6 @@ final class VolatileCache
 
 	public static function unlock(string $key): bool {}
 
-	public static function getCacheStoreType(string $key_or_property, ?string $class_name = null): CacheStoreType {}
-
 	public static function info(): StaticCacheInfo {}
 }
 
@@ -150,8 +139,6 @@ final class PinnedCache
 	public static function increment(string $key, int $step = 1): int|false {}
 
 	public static function decrement(string $key, int $step = 1): int|false {}
-
-	public static function getCacheStoreType(string $key_or_property, ?string $class_name = null): CacheStoreType {}
 
 	public static function info(): StaticCacheInfo {}
 }

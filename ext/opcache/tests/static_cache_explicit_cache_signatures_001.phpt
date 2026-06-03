@@ -47,7 +47,6 @@ foreach ([
 	'OPcache\\VolatileCache::delete' => [],
 	'OPcache\\VolatileCache::deleteMultiple' => [],
 	'OPcache\\VolatileCache::clear' => [],
-	'OPcache\\VolatileCache::getCacheStoreType' => ['class_name'],
 	'OPcache\\VolatileCache::info' => [],
 	'OPcache\\PinnedCache::set' => ['value'],
 	'OPcache\\PinnedCache::setMultiple' => [],
@@ -61,7 +60,6 @@ foreach ([
 	'OPcache\\PinnedCache::clear' => [],
 	'OPcache\\PinnedCache::increment' => ['step'],
 	'OPcache\\PinnedCache::decrement' => ['step'],
-	'OPcache\\PinnedCache::getCacheStoreType' => ['class_name'],
 	'OPcache\\PinnedCache::info' => [],
 ] as $method => $parameters) {
 	$reflection = ReflectionMethod::createFromMethodName($method);
@@ -92,7 +90,6 @@ OPcache\VolatileCache::unlock static=1 params=1/1 return=bool
 OPcache\VolatileCache::delete static=1 params=1/1 return=bool
 OPcache\VolatileCache::deleteMultiple static=1 params=1/1 return=bool
 OPcache\VolatileCache::clear static=1 params=0/0 return=bool
-OPcache\VolatileCache::getCacheStoreType $class_name=?string static=1 params=1/2 return=OPcache\CacheStoreType
 OPcache\VolatileCache::info static=1 params=0/0 return=OPcache\StaticCacheInfo
 OPcache\PinnedCache::set $value=null|bool|int|float|string|array|object static=1 params=2/2 return=bool
 OPcache\PinnedCache::setMultiple static=1 params=1/1 return=bool
@@ -106,5 +103,4 @@ OPcache\PinnedCache::deleteMultiple static=1 params=1/1 return=bool
 OPcache\PinnedCache::clear static=1 params=0/0 return=bool
 OPcache\PinnedCache::increment $step=int static=1 params=1/2 return=int|false
 OPcache\PinnedCache::decrement $step=int static=1 params=1/2 return=int|false
-OPcache\PinnedCache::getCacheStoreType $class_name=?string static=1 params=1/2 return=OPcache\CacheStoreType
 OPcache\PinnedCache::info static=1 params=0/0 return=OPcache\StaticCacheInfo

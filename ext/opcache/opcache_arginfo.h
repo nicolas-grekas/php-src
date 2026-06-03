@@ -1,5 +1,5 @@
 /* This is a generated file, edit opcache.stub.php instead.
- * Stub hash: ad17ed5c8a3b83b385c4b188c39e375df65a4848 */
+ * Stub hash: 6afd1215e69117c0d45ad039c50f3373298a2560 */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_opcache_reset, 0, 0, _IS_BOOL, 0)
 ZEND_END_ARG_INFO()
@@ -78,11 +78,6 @@ ZEND_END_ARG_INFO()
 
 #define arginfo_class_OPcache_VolatileCache_unlock arginfo_class_OPcache_VolatileCache_has
 
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_OPcache_VolatileCache_getCacheStoreType, 0, 1, OPcache\\CacheStoreType, 0)
-	ZEND_ARG_TYPE_INFO(0, key_or_property, IS_STRING, 0)
-	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, class_name, IS_STRING, 1, "null")
-ZEND_END_ARG_INFO()
-
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_OPcache_VolatileCache_info, 0, 0, OPcache\\StaticCacheInfo, 0)
 ZEND_END_ARG_INFO()
 
@@ -118,8 +113,6 @@ ZEND_END_ARG_INFO()
 
 #define arginfo_class_OPcache_PinnedCache_decrement arginfo_class_OPcache_PinnedCache_increment
 
-#define arginfo_class_OPcache_PinnedCache_getCacheStoreType arginfo_class_OPcache_VolatileCache_getCacheStoreType
-
 #define arginfo_class_OPcache_PinnedCache_info arginfo_class_OPcache_VolatileCache_info
 
 ZEND_FUNCTION(opcache_reset);
@@ -142,7 +135,6 @@ ZEND_METHOD(OPcache_VolatileCache, deleteMultiple);
 ZEND_METHOD(OPcache_VolatileCache, clear);
 ZEND_METHOD(OPcache_VolatileCache, lock);
 ZEND_METHOD(OPcache_VolatileCache, unlock);
-ZEND_METHOD(OPcache_VolatileCache, getCacheStoreType);
 ZEND_METHOD(OPcache_VolatileCache, info);
 ZEND_METHOD(OPcache_PinnedCache, get);
 ZEND_METHOD(OPcache_PinnedCache, getMultiple);
@@ -156,7 +148,6 @@ ZEND_METHOD(OPcache_PinnedCache, lock);
 ZEND_METHOD(OPcache_PinnedCache, unlock);
 ZEND_METHOD(OPcache_PinnedCache, increment);
 ZEND_METHOD(OPcache_PinnedCache, decrement);
-ZEND_METHOD(OPcache_PinnedCache, getCacheStoreType);
 ZEND_METHOD(OPcache_PinnedCache, info);
 
 static const zend_function_entry ext_functions[] = {
@@ -192,7 +183,6 @@ static const zend_function_entry class_OPcache_VolatileCache_methods[] = {
 	ZEND_ME(OPcache_VolatileCache, clear, arginfo_class_OPcache_VolatileCache_clear, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
 	ZEND_ME(OPcache_VolatileCache, lock, arginfo_class_OPcache_VolatileCache_lock, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
 	ZEND_ME(OPcache_VolatileCache, unlock, arginfo_class_OPcache_VolatileCache_unlock, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
-	ZEND_ME(OPcache_VolatileCache, getCacheStoreType, arginfo_class_OPcache_VolatileCache_getCacheStoreType, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
 	ZEND_ME(OPcache_VolatileCache, info, arginfo_class_OPcache_VolatileCache_info, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
 	ZEND_FE_END
 };
@@ -210,7 +200,6 @@ static const zend_function_entry class_OPcache_PinnedCache_methods[] = {
 	ZEND_ME(OPcache_PinnedCache, unlock, arginfo_class_OPcache_PinnedCache_unlock, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
 	ZEND_ME(OPcache_PinnedCache, increment, arginfo_class_OPcache_PinnedCache_increment, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
 	ZEND_ME(OPcache_PinnedCache, decrement, arginfo_class_OPcache_PinnedCache_decrement, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
-	ZEND_ME(OPcache_PinnedCache, getCacheStoreType, arginfo_class_OPcache_PinnedCache_getCacheStoreType, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
 	ZEND_ME(OPcache_PinnedCache, info, arginfo_class_OPcache_PinnedCache_info, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
 	ZEND_FE_END
 };
@@ -321,23 +310,6 @@ static zend_class_entry *register_class_OPcache_CacheStrategy(void)
 	zval enum_case_Tracking_value;
 	ZVAL_LONG(&enum_case_Tracking_value, 1);
 	zend_enum_add_case_cstr(class_entry, "Tracking", &enum_case_Tracking_value);
-
-	return class_entry;
-}
-
-static zend_class_entry *register_class_OPcache_CacheStoreType(void)
-{
-	zend_class_entry *class_entry = zend_register_internal_enum("OPcache\\CacheStoreType", IS_UNDEF, NULL);
-
-	zend_enum_add_case_cstr(class_entry, "NotFound", NULL);
-
-	zend_enum_add_case_cstr(class_entry, "Scalar", NULL);
-
-	zend_enum_add_case_cstr(class_entry, "SharedGraph", NULL);
-
-	zend_enum_add_case_cstr(class_entry, "OPcacheSerialized", NULL);
-
-	zend_enum_add_case_cstr(class_entry, "PHPSerialized", NULL);
 
 	return class_entry;
 }
