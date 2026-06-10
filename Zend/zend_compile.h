@@ -412,11 +412,19 @@ typedef struct _zend_oparray_context {
 /* op_array uses strict mode types                        |     |     |     */
 #define ZEND_ACC_STRICT_TYPES            (1U << 31) /*    |  X  |     |     */
 /*                                                        |     |     |     */
-/* Function Flags 2 (fn_flags2) (unused: 1-31)            |     |     |     */
+/* Function Flags 2 (fn_flags2) (unused: 3-31)            |     |     |     */
 /* ============================                           |     |     |     */
 /*                                                        |     |     |     */
 /* Function forbids dynamic calls                         |     |     |     */
 #define ZEND_ACC2_FORBID_DYN_CALLS       (1 << 0)  /*     |  X  |     |     */
+/*                                                        |     |     |     */
+/* Closure was declared in a constant expression          |     |     |     */
+#define ZEND_ACC2_CONSTEXPR_CLOSURE      (1 << 1)  /*     |  X  |     |     */
+/*                                                        |     |     |     */
+/* Fake closure was created by evaluating a first-class   |     |     |     */
+/* callable in a constant expression (set on the          |     |     |     */
+/* closure's own function copy, never on the original)    |     |     |     */
+#define ZEND_ACC2_CONSTEXPR_FCC          (1 << 2)  /*     |  X  |     |     */
 
 #define ZEND_ACC_PPP_MASK  (ZEND_ACC_PUBLIC | ZEND_ACC_PROTECTED | ZEND_ACC_PRIVATE)
 #define ZEND_ACC_PPP_SET_MASK  (ZEND_ACC_PUBLIC_SET | ZEND_ACC_PROTECTED_SET | ZEND_ACC_PRIVATE_SET)

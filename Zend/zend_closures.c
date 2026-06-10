@@ -19,8 +19,11 @@
 
 #include "zend.h"
 #include "zend_API.h"
+#include "zend_ast.h"
+#include "zend_attributes.h"
 #include "zend_closures.h"
 #include "zend_exceptions.h"
+#include "zend_execute.h"
 #include "zend_interfaces.h"
 #include "zend_objects.h"
 #include "zend_objects_API.h"
@@ -33,6 +36,10 @@ typedef struct _zend_closure {
 	zval              this_ptr;
 	zend_class_entry *called_scope;
 	zif_handler       orig_internal_handler;
+	/* The class whose constant expressions declared this closure, when it was
+	 * created by evaluating a first-class callable in one of them
+	 * (ZEND_ACC2_CONSTEXPR_FCC). */
+	zend_class_entry *constexpr_site;
 } zend_closure;
 
 /* non-static since it needs to be referenced */
@@ -40,6 +47,8 @@ ZEND_API zend_class_entry *zend_ce_closure;
 static zend_object_handlers closure_handlers;
 
 static zend_result zend_closure_get_closure(zend_object *obj, zend_class_entry **ce_ptr, zend_function **fptr_ptr, zend_object **obj_ptr, bool check_only);
+static ZEND_COLD ZEND_NAMED_FUNCTION(zend_closure_uninitialized_handler);
+static void zend_closure_init_ex(zend_closure *closure, zend_function *func, zend_class_entry *scope, zend_class_entry *called_scope, zval *this_ptr, bool is_fake);
 
 ZEND_METHOD(Closure, __invoke) /* {{{ */
 {
@@ -448,6 +457,524 @@ ZEND_METHOD(Closure, getCurrent)
 	RETURN_OBJ_COPY(obj);
 }
 
+/* {{{ Closures declared in constant expressions
+ *
+ * Closures declared in constant expressions are static, capture no variables
+ * and are fully described by their compiled op_array. This makes them
+ * addressable by (class, id), where the id is the position of the closure in
+ * a canonical walk over all constant expression ASTs that are reachable from
+ * the class and that are not subject to in-place evaluation: attribute
+ * arguments and parameter default values, including those of nested
+ * functions. Class constant values and property default values are evaluated
+ * (and their AST freed) in place, so closures declared there are not
+ * addressable this way.
+ *
+ * The walk visits candidates in a deterministic order that only depends on
+ * the compiled class, not on runtime evaluation state, so ids computed by one
+ * process can be resolved by another process running the same code.
+ */
+
+typedef struct {
+	uint32_t next_id;
+	/* When by_id is true, search for target_id. Otherwise search for the
+	 * op_array of an anonymous closure identified by its opcodes, or for a
+	 * first-class callable reference matching the fcc closure. */
+	bool by_id;
+	uint32_t target_id;
+	const zend_op *opcodes;
+	const zend_closure *fcc;
+	/* The class being walked; used to resolve self/parent references. */
+	zend_class_entry *site_class;
+	/* The found site: either a ZEND_AST_OP_ARRAY node, or a ZEND_AST_CALL /
+	 * ZEND_AST_STATIC_CALL node whose argument list is a first-class callable
+	 * placeholder. */
+	zend_ast *found;
+	uint32_t found_id;
+} zend_constexpr_closure_walk;
+
+static bool zend_constexpr_closure_walk_op_array(zend_constexpr_closure_walk *w, zend_op_array *op_array);
+
+/* Whether the named function resolved from a first-class callable site is the
+ * one the closure was created from. */
+static bool zend_closure_func_matches(const zend_closure *closure, const zend_function *resolved)
+{
+	if (resolved->type != closure->func.type) {
+		return false;
+	}
+	if (resolved->type == ZEND_USER_FUNCTION) {
+		return resolved->op_array.opcodes == closure->func.op_array.opcodes;
+	}
+	/* The handler of internal fake closures is wrapped, the original one is
+	 * saved in orig_internal_handler. This also rejects __call/__callstatic
+	 * trampolines, whose handler is not the resolved function. */
+	return resolved->internal_function.handler == closure->orig_internal_handler;
+}
+
+/* Whether the first-class callable declared by the given site resolves to the
+ * function the closure was created from. Resolution is done by name and
+ * pointer comparisons only: no autoloading, no user code, no exceptions. */
+static bool zend_constexpr_fcc_matches(const zend_constexpr_closure_walk *w, const zend_ast *ast)
+{
+	const zend_closure *closure = w->fcc;
+	const zend_function *resolved = NULL;
+	zend_string *lcname;
+
+	if (!closure) {
+		return false;
+	}
+
+	if (ast->kind == ZEND_AST_STATIC_CALL) {
+		const zend_ast *class_ast = ast->child[0];
+		zend_class_entry *ref_ce;
+
+		if (!closure->func.common.scope || !closure->called_scope) {
+			return false;
+		}
+
+		switch (class_ast->attr >> ZEND_CONST_EXPR_NEW_FETCH_TYPE_SHIFT) {
+			case ZEND_FETCH_CLASS_SELF:
+				ref_ce = w->site_class;
+				break;
+			case ZEND_FETCH_CLASS_PARENT:
+				ref_ce = w->site_class->parent;
+				break;
+			default:
+				ref_ce = zend_string_equals_ci(zend_ast_get_str((zend_ast *) class_ast), closure->called_scope->name)
+					? closure->called_scope : NULL;
+				break;
+		}
+		if (!ref_ce || ref_ce != closure->called_scope) {
+			return false;
+		}
+
+		lcname = zend_string_tolower(zend_ast_get_str(ast->child[1]));
+		resolved = zend_hash_find_ptr(&ref_ce->function_table, lcname);
+		zend_string_release_ex(lcname, 0);
+	} else {
+		ZEND_ASSERT(ast->kind == ZEND_AST_CALL);
+
+		if (closure->func.common.scope || closure->called_scope) {
+			return false;
+		}
+
+		lcname = zend_string_tolower(zend_ast_get_str(ast->child[0]));
+		resolved = zend_hash_find_ptr(EG(function_table), lcname);
+		if (!resolved && ast->child[0]->attr != ZEND_NAME_FQ) {
+			const char *backslash = zend_memrchr(ZSTR_VAL(lcname), '\\', ZSTR_LEN(lcname));
+			if (backslash) {
+				resolved = zend_hash_str_find_ptr(EG(function_table),
+					backslash + 1, ZSTR_LEN(lcname) - (backslash - ZSTR_VAL(lcname) + 1));
+			}
+		}
+		zend_string_release_ex(lcname, 0);
+	}
+
+	return resolved && zend_closure_func_matches(closure, resolved);
+}
+
+static bool zend_constexpr_closure_visit_op_array(zend_constexpr_closure_walk *w, zend_ast *ast)
+{
+	zend_op_array *op_array = zend_ast_get_op_array(ast)->op_array;
+	uint32_t id = w->next_id++;
+
+	if (w->by_id ? w->target_id == id : (w->opcodes && w->opcodes == op_array->opcodes)) {
+		w->found = ast;
+		w->found_id = id;
+		return true;
+	}
+
+	/* The closure may itself declare closures in its attributes or in its
+	 * parameter default values. */
+	return zend_constexpr_closure_walk_op_array(w, op_array);
+}
+
+static bool zend_constexpr_closure_walk_ast(zend_constexpr_closure_walk *w, zend_ast *ast)
+{
+	if (!ast) {
+		return false;
+	}
+
+	switch (ast->kind) {
+		case ZEND_AST_OP_ARRAY:
+			return zend_constexpr_closure_visit_op_array(w, ast);
+		case ZEND_AST_ZVAL:
+		case ZEND_AST_CONSTANT:
+			return false;
+		case ZEND_AST_CALL:
+		case ZEND_AST_STATIC_CALL: {
+			zend_ast *args = ast->kind == ZEND_AST_CALL ? ast->child[1] : ast->child[2];
+
+			/* In constant expressions, calls only exist in their first-class
+			 * callable form: each one is a closure declaration site. */
+			if (args && args->kind == ZEND_AST_CALLABLE_CONVERT) {
+				uint32_t id = w->next_id++;
+
+				if (w->by_id ? w->target_id == id : zend_constexpr_fcc_matches(w, ast)) {
+					w->found = ast;
+					w->found_id = id;
+					return true;
+				}
+				return false;
+			}
+			break;
+		}
+		case ZEND_AST_CALLABLE_CONVERT:
+			/* Visited through its enclosing call node. */
+			return false;
+		default:
+			break;
+	}
+
+	if (zend_ast_is_list(ast)) {
+		zend_ast_list *list = zend_ast_get_list(ast);
+		for (uint32_t i = 0; i < list->children; i++) {
+			if (zend_constexpr_closure_walk_ast(w, list->child[i])) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	if (zend_ast_is_decl(ast)) {
+		/* Closure declarations in constant expressions are compiled to
+		 * ZEND_AST_OP_ARRAY nodes, so declarations cannot appear here. */
+		ZEND_UNREACHABLE();
+		return false;
+	}
+
+	uint32_t children = zend_ast_get_num_children(ast);
+	for (uint32_t i = 0; i < children; i++) {
+		if (zend_constexpr_closure_walk_ast(w, ast->child[i])) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool zend_constexpr_closure_walk_zval(zend_constexpr_closure_walk *w, zval *zv)
+{
+	if (Z_TYPE_P(zv) == IS_CONSTANT_AST) {
+		return zend_constexpr_closure_walk_ast(w, Z_ASTVAL_P(zv));
+	}
+	return false;
+}
+
+static bool zend_constexpr_closure_walk_attributes(zend_constexpr_closure_walk *w, HashTable *attributes)
+{
+	zend_attribute *attr;
+
+	if (!attributes) {
+		return false;
+	}
+
+	ZEND_HASH_FOREACH_PTR(attributes, attr) {
+		for (uint32_t i = 0; i < attr->argc; i++) {
+			if (zend_constexpr_closure_walk_zval(w, &attr->args[i].value)) {
+				return true;
+			}
+		}
+	} ZEND_HASH_FOREACH_END();
+
+	return false;
+}
+
+static bool zend_constexpr_closure_walk_op_array(zend_constexpr_closure_walk *w, zend_op_array *op_array)
+{
+	if (op_array->type != ZEND_USER_FUNCTION) {
+		return false;
+	}
+
+	if (zend_constexpr_closure_walk_attributes(w, op_array->attributes)) {
+		return true;
+	}
+
+	/* Parameter default values are IS_CONSTANT_AST literals used by RECV_INIT. */
+	for (uint32_t i = 0; i < op_array->last_literal; i++) {
+		if (zend_constexpr_closure_walk_zval(w, &op_array->literals[i])) {
+			return true;
+		}
+	}
+
+	for (uint32_t i = 0; i < op_array->num_dynamic_func_defs; i++) {
+		if (zend_constexpr_closure_walk_op_array(w, op_array->dynamic_func_defs[i])) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool zend_constexpr_closure_walk_class(zend_constexpr_closure_walk *w, zend_class_entry *ce)
+{
+	zend_class_constant *c;
+	zend_property_info *prop_info;
+	zend_function *func;
+
+	if (ce->type != ZEND_USER_CLASS) {
+		return false;
+	}
+
+	if (zend_constexpr_closure_walk_attributes(w, ce->attributes)) {
+		return true;
+	}
+
+	ZEND_HASH_MAP_FOREACH_PTR(&ce->constants_table, c) {
+		if (zend_constexpr_closure_walk_attributes(w, c->attributes)) {
+			return true;
+		}
+	} ZEND_HASH_FOREACH_END();
+
+	ZEND_HASH_MAP_FOREACH_PTR(&ce->properties_info, prop_info) {
+		if (zend_constexpr_closure_walk_attributes(w, prop_info->attributes)) {
+			return true;
+		}
+		if (prop_info->hooks) {
+			for (uint32_t i = 0; i < ZEND_PROPERTY_HOOK_COUNT; i++) {
+				if (prop_info->hooks[i]
+				 && zend_constexpr_closure_walk_op_array(w, &prop_info->hooks[i]->op_array)) {
+					return true;
+				}
+			}
+		}
+	} ZEND_HASH_FOREACH_END();
+
+	ZEND_HASH_MAP_FOREACH_PTR(&ce->function_table, func) {
+		if (zend_constexpr_closure_walk_op_array(w, &func->op_array)) {
+			return true;
+		}
+	} ZEND_HASH_FOREACH_END();
+
+	return false;
+}
+
+ZEND_API zend_ast *zend_constexpr_closure_site_by_id(zend_class_entry *ce, zend_long id)
+{
+	zend_constexpr_closure_walk w;
+
+	if (id < 0 || (zend_ulong) id > UINT32_MAX || ce->type != ZEND_USER_CLASS) {
+		return NULL;
+	}
+
+	memset(&w, 0, sizeof(w));
+	w.by_id = true;
+	w.target_id = (uint32_t) id;
+	w.site_class = ce;
+
+	if (!zend_constexpr_closure_walk_class(&w, ce)) {
+		return NULL;
+	}
+
+	return w.found;
+}
+
+static uint32_t zend_constexpr_closure_site_lineno(const zend_ast *site)
+{
+	if (site->kind == ZEND_AST_OP_ARRAY) {
+		return zend_ast_get_op_array((zend_ast *) site)->op_array->line_start;
+	}
+	return zend_ast_get_lineno((zend_ast *) site);
+}
+
+ZEND_API zend_result zend_constexpr_closure_ref(zend_object *closure_obj, zend_class_entry **ce, uint32_t *id, uint32_t *lineno)
+{
+	const zend_closure *closure = (const zend_closure *) closure_obj;
+	zend_constexpr_closure_walk w;
+	zend_class_entry *site_class;
+
+	memset(&w, 0, sizeof(w));
+
+	if (closure->func.type == ZEND_USER_FUNCTION
+	 && (closure->func.common.fn_flags2 & ZEND_ACC2_CONSTEXPR_CLOSURE)
+	 && !(closure->func.common.fn_flags & ZEND_ACC_FAKE_CLOSURE)) {
+		/* Anonymous closure declared in a constant expression: identified by
+		 * its op_array, found in the class it is scoped to. */
+		site_class = closure->func.common.scope;
+		w.opcodes = closure->func.op_array.opcodes;
+	} else if ((closure->func.common.fn_flags2 & ZEND_ACC2_CONSTEXPR_FCC)
+	 && (closure->func.common.fn_flags & ZEND_ACC_FAKE_CLOSURE)
+	 && Z_TYPE(closure->this_ptr) == IS_UNDEF) {
+		/* First-class callable evaluated in a constant expression: identified
+		 * by its target, found in the class that declared the reference. */
+		site_class = closure->constexpr_site;
+		w.fcc = closure;
+	} else {
+		return FAILURE;
+	}
+
+	if (!site_class || site_class->type != ZEND_USER_CLASS || (site_class->ce_flags & ZEND_ACC_ANON_CLASS)) {
+		return FAILURE;
+	}
+
+	w.site_class = site_class;
+
+	if (!zend_constexpr_closure_walk_class(&w, site_class)) {
+		return FAILURE;
+	}
+
+	*ce = site_class;
+	*id = w.found_id;
+	if (lineno) {
+		*lineno = zend_constexpr_closure_site_lineno(w.found);
+	}
+	return SUCCESS;
+}
+
+ZEND_API void zend_closure_mark_as_constexpr_fcc(zval *closure_zv, zend_class_entry *site_class)
+{
+	zend_closure *closure = (zend_closure *) Z_OBJ_P(closure_zv);
+
+	ZEND_ASSERT(closure->func.common.fn_flags & ZEND_ACC_FAKE_CLOSURE);
+	closure->func.common.fn_flags2 |= ZEND_ACC2_CONSTEXPR_FCC;
+	closure->constexpr_site = site_class;
+}
+/* }}} */
+
+/* {{{ Serialize a closure as a reference to the declaration site of the
+       constant expression that declared it: either an anonymous closure
+       declaration, or a first-class callable reference */
+ZEND_METHOD(Closure, __serialize)
+{
+	zend_class_entry *ce;
+	uint32_t id, lineno;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	if (zend_constexpr_closure_ref(Z_OBJ_P(ZEND_THIS), &ce, &id, &lineno) == FAILURE) {
+		zend_throw_exception(NULL, "Serialization of 'Closure' is not allowed", 0);
+		RETURN_THROWS();
+	}
+
+	array_init(return_value);
+	add_assoc_str(return_value, "class", zend_string_copy(ce->name));
+	add_assoc_long(return_value, "id", id);
+	add_assoc_long(return_value, "line", lineno);
+}
+/* }}} */
+
+/* {{{ Recreate a closure from a reference to its declaration site */
+ZEND_METHOD(Closure, __unserialize)
+{
+	zend_closure *closure = (zend_closure *) Z_OBJ_P(ZEND_THIS);
+	HashTable *data;
+	zval *z_class, *z_id, *z_line;
+	zend_class_entry *ce;
+	zend_ast *site;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_ARRAY_HT(data)
+	ZEND_PARSE_PARAMETERS_END();
+
+	if (closure->func.type != ZEND_INTERNAL_FUNCTION
+	 || closure->func.internal_function.handler != zend_closure_uninitialized_handler) {
+		zend_throw_exception(NULL, "Cannot unserialize an already initialized Closure", 0);
+		RETURN_THROWS();
+	}
+
+	z_class = zend_hash_str_find(data, ZEND_STRL("class"));
+	z_id = zend_hash_str_find(data, ZEND_STRL("id"));
+	z_line = zend_hash_str_find(data, ZEND_STRL("line"));
+	if (z_class) {
+		ZVAL_DEREF(z_class);
+	}
+	if (z_id) {
+		ZVAL_DEREF(z_id);
+	}
+	if (z_line) {
+		ZVAL_DEREF(z_line);
+	}
+	if (!z_class || Z_TYPE_P(z_class) != IS_STRING
+	 || !z_id || Z_TYPE_P(z_id) != IS_LONG
+	 || !z_line || Z_TYPE_P(z_line) != IS_LONG) {
+		zend_throw_exception(NULL, "Invalid serialization data for Closure object", 0);
+		RETURN_THROWS();
+	}
+
+	ce = zend_lookup_class(Z_STR_P(z_class));
+	if (!ce || ce->type != ZEND_USER_CLASS) {
+		if (!EG(exception)) {
+			zend_throw_exception_ex(NULL, 0,
+				"Invalid serialization data for Closure object (cannot load class \"%s\")",
+				Z_STRVAL_P(z_class));
+		}
+		RETURN_THROWS();
+	}
+
+	site = zend_constexpr_closure_site_by_id(ce, Z_LVAL_P(z_id));
+	if (!site || (zend_long) zend_constexpr_closure_site_lineno(site) != Z_LVAL_P(z_line)) {
+		zend_throw_exception_ex(NULL, 0,
+			"Invalid serialization data for Closure object (constant-expression closure " ZEND_LONG_FMT " of class %s not found)",
+			Z_LVAL_P(z_id), ZSTR_VAL(ce->name));
+		RETURN_THROWS();
+	}
+
+	if (site->kind == ZEND_AST_OP_ARRAY) {
+		zend_closure_init_ex(closure,
+			(zend_function *) zend_ast_get_op_array(site)->op_array, ce, ce, NULL, /* is_fake */ false);
+	} else {
+		/* First-class callable site: re-evaluate it like attribute evaluation
+		 * would, including its visibility checks against the site class. */
+		zval tmp;
+		zend_closure *tmp_closure;
+
+		if (zend_ast_evaluate(&tmp, site, ce) == FAILURE) {
+			if (!EG(exception)) {
+				zend_throw_exception(NULL, "Invalid serialization data for Closure object", 0);
+			}
+			RETURN_THROWS();
+		}
+
+		ZEND_ASSERT(Z_TYPE(tmp) == IS_OBJECT && Z_OBJCE(tmp) == zend_ce_closure);
+		tmp_closure = (zend_closure *) Z_OBJ(tmp);
+
+		zend_closure_init_ex(closure, &tmp_closure->func,
+			tmp_closure->func.common.scope, tmp_closure->called_scope, NULL, /* is_fake */ true);
+		closure->func.common.fn_flags |= ZEND_ACC_FAKE_CLOSURE;
+		closure->constexpr_site = tmp_closure->constexpr_site;
+		GC_ADD_FLAGS(&closure->std, GC_NOT_COLLECTABLE);
+
+		zval_ptr_dtor(&tmp);
+	}
+}
+/* }}} */
+
+/* {{{ Recreate a closure declared in a constant expression of the given class */
+ZEND_METHOD(Closure, fromConstExpr)
+{
+	zend_string *class_name;
+	zend_long id;
+	zend_class_entry *ce;
+	zend_ast *site;
+
+	ZEND_PARSE_PARAMETERS_START(2, 2)
+		Z_PARAM_STR(class_name)
+		Z_PARAM_LONG(id)
+	ZEND_PARSE_PARAMETERS_END();
+
+	ce = zend_lookup_class(class_name);
+	if (!ce) {
+		if (!EG(exception)) {
+			zend_throw_error(NULL, "Class \"%s\" not found", ZSTR_VAL(class_name));
+		}
+		RETURN_THROWS();
+	}
+
+	site = zend_constexpr_closure_site_by_id(ce, id);
+	if (!site) {
+		zend_value_error("Closure::fromConstExpr(): Argument #2 ($id) does not refer to a constant-expression closure of class %s", ZSTR_VAL(ce->name));
+		RETURN_THROWS();
+	}
+
+	if (site->kind == ZEND_AST_OP_ARRAY) {
+		zend_create_closure(return_value, (zend_function *) zend_ast_get_op_array(site)->op_array, ce, ce, NULL);
+	} else if (zend_ast_evaluate(return_value, site, ce) == FAILURE) {
+		if (!EG(exception)) {
+			zend_value_error("Closure::fromConstExpr(): Argument #2 ($id) does not refer to a constant-expression closure of class %s", ZSTR_VAL(ce->name));
+		}
+		RETURN_THROWS();
+	}
+}
+/* }}} */
+
 static ZEND_COLD zend_function *zend_closure_get_constructor(zend_object *object) /* {{{ */
 {
 	zend_throw_error(NULL, "Instantiation of class Closure is not allowed");
@@ -570,6 +1097,12 @@ static void zend_closure_free_storage(zend_object *object) /* {{{ */
 }
 /* }}} */
 
+static ZEND_COLD ZEND_NAMED_FUNCTION(zend_closure_uninitialized_handler) /* {{{ */
+{
+	zend_throw_error(NULL, "Cannot call an uninitialized Closure");
+}
+/* }}} */
+
 static zend_object *zend_closure_new(zend_class_entry *class_type) /* {{{ */
 {
 	zend_closure *closure;
@@ -578,6 +1111,17 @@ static zend_object *zend_closure_new(zend_class_entry *class_type) /* {{{ */
 	memset(closure, 0, sizeof(zend_closure));
 
 	zend_object_std_init(&closure->std, class_type);
+
+	/* Initialize the function as a safe placeholder. Until the closure is
+	 * actually initialized through zend_closure_init_ex() it may be observed
+	 * by userland code (e.g. while delayed __unserialize() calls are still
+	 * pending) and must not crash any object handler. The placeholder mimics
+	 * a fake internal closure with a handler that always throws. */
+	closure->func.type = ZEND_INTERNAL_FUNCTION;
+	closure->func.common.fn_flags = ZEND_ACC_PUBLIC | ZEND_ACC_CLOSURE | ZEND_ACC_FAKE_CLOSURE;
+	closure->func.common.function_name = ZSTR_EMPTY_ALLOC();
+	closure->func.internal_function.handler = zend_closure_uninitialized_handler;
+	closure->orig_internal_handler = zend_closure_uninitialized_handler;
 
 	return (zend_object*)closure;
 }
@@ -590,6 +1134,7 @@ static zend_object *zend_closure_clone(zend_object *zobject) /* {{{ */
 
 	zend_create_closure(&result, &closure->func,
 		closure->func.common.scope, closure->called_scope, &closure->this_ptr);
+	((zend_closure *) Z_OBJ(result))->constexpr_site = closure->constexpr_site;
 	return Z_OBJ(result);
 }
 /* }}} */
@@ -757,14 +1302,9 @@ static ZEND_NAMED_FUNCTION(zend_closure_internal_handler) /* {{{ */
 }
 /* }}} */
 
-static void zend_create_closure_ex(zval *res, zend_function *func, zend_class_entry *scope, zend_class_entry *called_scope, zval *this_ptr, bool is_fake) /* {{{ */
+static void zend_closure_init_ex(zend_closure *closure, zend_function *func, zend_class_entry *scope, zend_class_entry *called_scope, zval *this_ptr, bool is_fake) /* {{{ */
 {
-	zend_closure *closure;
 	void *ptr;
-
-	object_init_ex(res, zend_ce_closure);
-
-	closure = (zend_closure *)Z_OBJ_P(res);
 
 	if ((scope == NULL) && this_ptr && (Z_TYPE_P(this_ptr) != IS_UNDEF)) {
 		/* use dummy scope if we're binding an object without specifying a scope */
@@ -856,6 +1396,13 @@ static void zend_create_closure_ex(zval *res, zend_function *func, zend_class_en
 			ZVAL_OBJ_COPY(&closure->this_ptr, Z_OBJ_P(this_ptr));
 		}
 	}
+}
+/* }}} */
+
+static void zend_create_closure_ex(zval *res, zend_function *func, zend_class_entry *scope, zend_class_entry *called_scope, zval *this_ptr, bool is_fake) /* {{{ */
+{
+	object_init_ex(res, zend_ce_closure);
+	zend_closure_init_ex((zend_closure *) Z_OBJ_P(res), func, scope, called_scope, this_ptr, is_fake);
 }
 /* }}} */
 

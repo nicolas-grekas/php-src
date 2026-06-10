@@ -1244,6 +1244,12 @@ static zend_result ZEND_FASTCALL zend_ast_evaluate_inner(
 
 			zend_create_fake_closure(result, fptr, fptr->common.scope, called_scope, NULL);
 
+			if (scope) {
+				/* Remember the declaration site, so that the closure can be
+				 * serialized as a reference to it. */
+				zend_closure_mark_as_constexpr_fcc(result, scope);
+			}
+
 			return SUCCESS;
 		}
 		case ZEND_AST_OP_ARRAY:

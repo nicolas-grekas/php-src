@@ -181,6 +181,17 @@ PHP 8.6 UPGRADE NOTES
     needing to be present beforehand.
   . It is now possible to define the `__debugInfo()` magic method on enums.
     RFC: https://wiki.php.net/rfc/debugable-enums
+  . Closures declared in constant expressions of a class member (anonymous
+    closures and first-class callables, of any visibility, in attribute
+    arguments and parameter default values) can now be serialized and
+    unserialized. The payload contains no code: it is a reference to the
+    declaration site (class name, deterministic per-class id, start line),
+    resolved against the loaded class. Closures created at runtime, bound to
+    an object, rebound to another scope, or declared in class constant
+    values, property defaults or outside a class still refuse to serialize.
+    The unserialize() allowed_classes filter applies to Closure as to any
+    other class. Added Closure::fromConstExpr($class, $id) plus
+    ReflectionFunction::getConstExprId()/getConstExprClass() for exporters.
 
 - Fileinfo:
   . finfo_file() now works with remote streams.
