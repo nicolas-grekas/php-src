@@ -1971,7 +1971,7 @@ ZEND_METHOD(ReflectionFunction, getConstExprId)
 	reflection_object *intern;
 	zend_function *fptr;
 	zend_class_entry *ce;
-	uint32_t id;
+	zend_string *id;
 
 	ZEND_PARSE_PARAMETERS_NONE();
 
@@ -1984,7 +1984,7 @@ ZEND_METHOD(ReflectionFunction, getConstExprId)
 		RETURN_NULL();
 	}
 
-	RETURN_LONG(id);
+	RETURN_STR(id);
 }
 /* }}} */
 
@@ -1996,7 +1996,7 @@ ZEND_METHOD(ReflectionFunction, getConstExprClass)
 	reflection_object *intern;
 	zend_function *fptr;
 	zend_class_entry *ce;
-	uint32_t id;
+	zend_string *id;
 
 	ZEND_PARSE_PARAMETERS_NONE();
 
@@ -2009,6 +2009,7 @@ ZEND_METHOD(ReflectionFunction, getConstExprClass)
 		RETURN_NULL();
 	}
 
+	zend_string_release(id);
 	RETURN_STR_COPY(ce->name);
 }
 /* }}} */

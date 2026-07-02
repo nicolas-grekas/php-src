@@ -41,14 +41,13 @@ ZEND_API const zend_function *zend_get_closure_method_def(zend_object *obj);
 ZEND_API zval* zend_get_closure_this_ptr(zval *obj);
 
 /* Closures declared in constant expressions (anonymous declarations as well
- * as first-class callable references) are addressable by a canonical
- * per-class id (see zend_closures.c for the definition of the walk).
- * zend_constexpr_closure_site_by_id() returns the declaration site for an id:
- * either a ZEND_AST_OP_ARRAY node or a ZEND_AST_CALL/ZEND_AST_STATIC_CALL
- * node in first-class callable form. zend_constexpr_closure_ref() returns the
- * reference for a Closure object, when it has one. */
-ZEND_API zend_ast *zend_constexpr_closure_site_by_id(zend_class_entry *ce, zend_long id);
-ZEND_API zend_result zend_constexpr_closure_ref(zend_object *closure_obj, zend_class_entry **ce, uint32_t *id, uint32_t *lineno);
+ * as first-class callable references) are addressable by an element-scoped
+ * reference: an opaque "<site>@<rank>" string where <site> names the declaring
+ * reflection element and <rank> is the closure's position within just that
+ * element (see zend_closures.c for the walk). zend_constexpr_closure_ref()
+ * returns the reference (a fresh zend_string the caller owns) for a Closure
+ * object, when it has one. */
+ZEND_API zend_result zend_constexpr_closure_ref(zend_object *closure_obj, zend_class_entry **ce, zend_string **id, uint32_t *lineno);
 ZEND_API void zend_closure_mark_as_constexpr_fcc(zval *closure_zv, zend_class_entry *site_class);
 
 END_EXTERN_C()

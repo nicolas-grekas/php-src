@@ -21,7 +21,7 @@ final class Closure
 
     public static function fromCallable(callable $callback): Closure {}
 
-    public static function fromConstExpr(string $class, int $id): Closure {}
+    public static function fromConstExpr(string $class, string $id): Closure {}
 
     public static function getCurrent(): Closure {}
 

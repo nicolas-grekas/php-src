@@ -44,10 +44,10 @@ var_dump((new ReflectionFunction('strlen'))->getConstExprClass());
 
 ?>
 --EXPECT--
-int(0)
+string(4) "$p@0"
 string(4) "Demo"
 string(2) "ok"
-int(1)
+string(4) "$p@1"
 string(4) "Demo"
 string(10) "Validators"
 string(7) "checked"

@@ -185,7 +185,8 @@ PHP 8.6 UPGRADE NOTES
     closures and first-class callables, of any visibility, in attribute
     arguments and parameter default values) can now be serialized and
     unserialized. The payload contains no code: it is a reference to the
-    declaration site (class name, deterministic per-class id, start line),
+    declaration site (class name, an element-scoped "<site>@<rank>" id naming
+    the declaring element and the closure's rank within it, start line),
     resolved against the loaded class. Closures created at runtime, bound to
     an object, rebound to another scope, or declared in class constant
     values, property defaults or outside a class still refuse to serialize.

@@ -55,12 +55,12 @@ $roundtrip($inner);
 ?>
 --EXPECT--
 string(8) "get-hook"
-int(0)
+string(11) "$v::get()@0"
 string(7) "default"
-int(1)
+string(15) "withDefault()@0"
 string(5) "inner"
-int(2)
+string(15) "makeClosure()@0"
 string(5) "outer"
-int(0)
+string(4) "$p@0"
 string(4) "deep"
-int(1)
+string(4) "$p@1"

@@ -128,7 +128,7 @@ class ReflectionFunction extends ReflectionFunctionAbstract
 
     public function isAnonymous(): bool {}
 
-    public function getConstExprId(): ?int {}
+    public function getConstExprId(): ?string {}
 
     public function getConstExprClass(): ?string {}
 

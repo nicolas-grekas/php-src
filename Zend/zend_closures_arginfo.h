@@ -1,5 +1,5 @@
 /* This is a generated file, edit zend_closures.stub.php instead.
- * Stub hash: 6bae83b479dd62881fe60643e4692e0218d436a5 */
+ * Stub hash: d84d010e45e23e4a61d3b40e795d1075bcbae91c */
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_Closure___construct, 0, 0, 0)
 ZEND_END_ARG_INFO()
@@ -26,7 +26,7 @@ ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Closure_fromConstExpr, 0, 2, Closure, 0)
 	ZEND_ARG_TYPE_INFO(0, class, IS_STRING, 0)
-	ZEND_ARG_TYPE_INFO(0, id, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, id, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Closure_getCurrent, 0, 0, Closure, 0)

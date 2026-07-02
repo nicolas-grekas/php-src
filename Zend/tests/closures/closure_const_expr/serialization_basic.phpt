@@ -68,17 +68,17 @@ bool(true)
 bool(true)
 array(7) {
   ["class"]=>
-  int(0)
+  string(2) "@0"
   ["const"]=>
-  int(1)
+  string(5) "FOO@0"
   ["prop-1"]=>
-  int(2)
+  string(7) "$name@0"
   ["prop-2"]=>
-  int(3)
+  string(7) "$name@1"
   ["method"]=>
-  int(4)
+  string(5) "m()@0"
   ["param"]=>
-  int(5)
+  string(5) "m()@1"
   ["case"]=>
-  int(0)
+  string(3) "X@0"
 }
