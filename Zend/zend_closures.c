@@ -481,12 +481,17 @@ typedef struct {
 	 * so adding/removing/reordering closures in one element does not renumber
 	 * closures in other elements. */
 	uint32_t next_id;
-	/* When by_id is true, search for target_id (a LOCAL rank; the caller has
-	 * already positioned the walk on a single element). Otherwise search for
-	 * the op_array of an anonymous closure identified by its opcodes, or for a
-	 * first-class callable reference matching the fcc closure. */
+	/* When by_id is true, search for target_id (a LOCAL rank among the
+	 * anonymous closures of a single element; the caller has already
+	 * positioned the walk on that element). When target_key is set, search
+	 * for the first-class callable reference matching that "Called::method"
+	 * / "function" key within the element. Otherwise search for the op_array
+	 * of an anonymous closure identified by its opcodes, or for a first-class
+	 * callable reference matching the fcc closure. */
 	bool by_id;
 	uint32_t target_id;
+	const char *target_key;
+	size_t target_key_len;
 	const zend_op *opcodes;
 	const zend_closure *fcc;
 	/* The class being walked; used to resolve self/parent references. */
@@ -595,6 +600,75 @@ static bool zend_constexpr_fcc_matches(const zend_constexpr_closure_walk *w, con
 	return resolved && zend_closure_func_matches(closure, resolved);
 }
 
+/* Whether the first-class callable declared by the given site matches a
+ * "Called::method" / "function" key. Pure string comparisons: class
+ * references are compile-time resolved names ('self'/'parent' resolve
+ * against the walked class), so no class or function is ever loaded. */
+static bool zend_constexpr_fcc_key_matches(const zend_constexpr_closure_walk *w, const zend_ast *ast)
+{
+	const char *key = w->target_key;
+	size_t key_len = w->target_key_len;
+	const char *sep = NULL;
+
+	for (size_t i = 0; i + 1 < key_len; i++) {
+		if (key[i] == ':' && key[i + 1] == ':') {
+			sep = key + i;
+			break;
+		}
+	}
+
+	if (ast->kind == ZEND_AST_STATIC_CALL) {
+		const zend_ast *class_ast = ast->child[0];
+		zend_string *method = zend_ast_get_str(ast->child[1]);
+		zend_string *ref_name;
+
+		if (!sep) {
+			return false;
+		}
+
+		switch (class_ast->attr >> ZEND_CONST_EXPR_NEW_FETCH_TYPE_SHIFT) {
+			case ZEND_FETCH_CLASS_SELF:
+				ref_name = w->site_class->name;
+				break;
+			case ZEND_FETCH_CLASS_PARENT:
+				ref_name = w->site_class->parent ? w->site_class->parent->name : NULL;
+				break;
+			default:
+				ref_name = zend_ast_get_str((zend_ast *) class_ast);
+				break;
+		}
+
+		return ref_name
+			&& ZSTR_LEN(ref_name) == (size_t) (sep - key)
+			&& zend_binary_strcasecmp(ZSTR_VAL(ref_name), ZSTR_LEN(ref_name), key, sep - key) == 0
+			&& ZSTR_LEN(method) == key_len - (sep - key) - 2
+			&& zend_binary_strcasecmp(ZSTR_VAL(method), ZSTR_LEN(method), sep + 2, ZSTR_LEN(method)) == 0;
+	}
+
+	ZEND_ASSERT(ast->kind == ZEND_AST_CALL);
+
+	if (sep) {
+		return false;
+	}
+
+	zend_string *fname = zend_ast_get_str(ast->child[0]);
+	if (ZSTR_LEN(fname) == key_len
+	 && zend_binary_strcasecmp(ZSTR_VAL(fname), ZSTR_LEN(fname), key, key_len) == 0) {
+		return true;
+	}
+	/* Non-fully-qualified names in namespaced code may resolve to the global
+	 * function, whose name is what serialization emits as the key. */
+	if (ast->child[0]->attr != ZEND_NAME_FQ) {
+		const char *backslash = zend_memrchr(ZSTR_VAL(fname), '\\', ZSTR_LEN(fname));
+		if (backslash) {
+			size_t tail_len = ZSTR_LEN(fname) - (backslash + 1 - ZSTR_VAL(fname));
+			return tail_len == key_len
+				&& zend_binary_strcasecmp(backslash + 1, tail_len, key, key_len) == 0;
+		}
+	}
+	return false;
+}
+
 static bool zend_constexpr_closure_visit_op_array(zend_constexpr_closure_walk *w, zend_ast *ast)
 {
 	zend_op_array *op_array = zend_ast_get_op_array(ast)->op_array;
@@ -631,13 +705,15 @@ static bool zend_constexpr_closure_walk_ast(zend_constexpr_closure_walk *w, zend
 			zend_ast *args = ast->kind == ZEND_AST_CALL ? ast->child[1] : ast->child[2];
 
 			/* In constant expressions, calls only exist in their first-class
-			 * callable form: each one is a closure declaration site. */
+			 * callable form: each one is a closure declaration site, keyed by
+			 * the name of its target. It does not consume a rank: adding or
+			 * removing a callable reference never renumbers the anonymous
+			 * closures of the element. */
 			if (args && args->kind == ZEND_AST_CALLABLE_CONVERT) {
-				uint32_t id = w->next_id++;
-
-				if (w->by_id ? w->target_id == id : zend_constexpr_fcc_matches(w, ast)) {
+				if (w->target_key
+					? zend_constexpr_fcc_key_matches(w, ast)
+					: (!w->by_id && zend_constexpr_fcc_matches(w, ast))) {
 					w->found = ast;
-					w->found_id = id;
 					w->found_kind = w->cur_kind;
 					w->found_name = w->cur_name;
 					w->found_hook = w->cur_hook;
@@ -791,23 +867,48 @@ static bool zend_constexpr_closure_walk_class(zend_constexpr_closure_walk *w, ze
 
 #undef WALK_ELEMENT
 
-/* Materialize the opaque "<site>@<rank>" reference from a found descriptor. */
+/* Materialize the opaque "<site>@<key>" reference from a found descriptor.
+ * The key is the local rank for an anonymous closure, and the name of the
+ * referenced callable ("Called::method" or "function") for a first-class
+ * callable, built from the resolved closure so that it carries canonical
+ * names regardless of how the source spells the reference. */
 static zend_string *zend_constexpr_closure_build_ref(const zend_constexpr_closure_walk *w)
 {
+	zend_string *key, *ref;
+
+	if (w->found->kind == ZEND_AST_OP_ARRAY) {
+		key = zend_long_to_str((zend_long) w->found_id);
+	} else if (w->fcc->func.common.scope) {
+		zend_string *called = w->fcc->called_scope->name;
+		zend_string *method = w->fcc->func.common.function_name;
+		key = zend_string_concat3(
+			ZSTR_VAL(called), ZSTR_LEN(called), "::", 2, ZSTR_VAL(method), ZSTR_LEN(method));
+	} else {
+		key = zend_string_copy(w->fcc->func.common.function_name);
+	}
+
 	switch (w->found_kind) {
 		case ZEND_CEXPR_SITE_CONST:
-			return zend_strpprintf(0, "%s@%u", ZSTR_VAL(w->found_name), (unsigned) w->found_id);
+			ref = zend_strpprintf(0, "%s@%s", ZSTR_VAL(w->found_name), ZSTR_VAL(key));
+			break;
 		case ZEND_CEXPR_SITE_PROP:
-			return zend_strpprintf(0, "$%s@%u", ZSTR_VAL(w->found_name), (unsigned) w->found_id);
+			ref = zend_strpprintf(0, "$%s@%s", ZSTR_VAL(w->found_name), ZSTR_VAL(key));
+			break;
 		case ZEND_CEXPR_SITE_HOOK:
-			return zend_strpprintf(0, "$%s::%s()@%u", ZSTR_VAL(w->found_name),
-				w->found_hook == ZEND_PROPERTY_HOOK_GET ? "get" : "set", (unsigned) w->found_id);
+			ref = zend_strpprintf(0, "$%s::%s()@%s", ZSTR_VAL(w->found_name),
+				w->found_hook == ZEND_PROPERTY_HOOK_GET ? "get" : "set", ZSTR_VAL(key));
+			break;
 		case ZEND_CEXPR_SITE_METHOD:
-			return zend_strpprintf(0, "%s()@%u", ZSTR_VAL(w->found_name), (unsigned) w->found_id);
+			ref = zend_strpprintf(0, "%s()@%s", ZSTR_VAL(w->found_name), ZSTR_VAL(key));
+			break;
 		case ZEND_CEXPR_SITE_CLASS:
 		default:
-			return zend_strpprintf(0, "@%u", (unsigned) w->found_id);
+			ref = zend_strpprintf(0, "@%s", ZSTR_VAL(key));
+			break;
 	}
+
+	zend_string_release_ex(key, 0);
+	return ref;
 }
 
 /* Resolve (element site, local rank) to a declaration-site AST: locate the one
@@ -815,7 +916,8 @@ static zend_string *zend_constexpr_closure_build_ref(const zend_constexpr_closur
  * element-scoping pays off on decode: instead of a class-global scan to the
  * Nth site, resolution is bounded by a single element's const-expr surface. */
 static zend_ast *zend_constexpr_closure_site_by_element(
-	zend_class_entry *ce, const char *site, size_t site_len, uint32_t rank)
+	zend_class_entry *ce, const char *site, size_t site_len,
+	uint32_t rank, const char *key, size_t key_len)
 {
 	zend_constexpr_closure_walk w;
 
@@ -824,8 +926,13 @@ static zend_ast *zend_constexpr_closure_site_by_element(
 	}
 
 	memset(&w, 0, sizeof(w));
-	w.by_id = true;
-	w.target_id = rank;
+	if (key) {
+		w.target_key = key;
+		w.target_key_len = key_len;
+	} else {
+		w.by_id = true;
+		w.target_id = rank;
+	}
 	w.site_class = ce;
 
 	if (site_len == 0) {
@@ -889,7 +996,10 @@ static zend_ast *zend_constexpr_closure_site_by_element(
 	return w.found;
 }
 
-/* Parse the opaque "<site>@<rank>" reference and resolve it. */
+/* Parse the opaque "<site>@<key>" reference and resolve it. An all-digits
+ * key is the local rank of an anonymous closure; anything else is the name
+ * of a first-class callable ("Called::method" or "function"; names cannot
+ * start with a digit, so the two forms cannot collide). */
 static zend_ast *zend_constexpr_closure_site_by_ref(zend_class_entry *ce, zend_string *id)
 {
 	const char *s = ZSTR_VAL(id);
@@ -899,23 +1009,32 @@ static zend_ast *zend_constexpr_closure_site_by_ref(zend_class_entry *ce, zend_s
 		return NULL;
 	}
 	size_t site_len = at - s;
-	const char *rank_s = at + 1;
-	size_t rank_len = len - site_len - 1;
-	if (rank_len == 0 || (rank_len > 1 && rank_s[0] == '0')) {
+	const char *key = at + 1;
+	size_t key_len = len - site_len - 1;
+	if (key_len == 0) {
 		return NULL;
 	}
+
+	bool is_rank = true;
 	uint64_t rank = 0;
-	for (size_t i = 0; i < rank_len; i++) {
-		if (rank_s[i] < '0' || rank_s[i] > '9') {
-			return NULL;
+	for (size_t i = 0; i < key_len; i++) {
+		if (key[i] < '0' || key[i] > '9') {
+			is_rank = false;
+			break;
 		}
-		rank = rank * 10 + (rank_s[i] - '0');
+		rank = rank * 10 + (key[i] - '0');
 		if (rank > UINT32_MAX) {
 			return NULL;
 		}
 	}
+	if (is_rank) {
+		if (key_len > 1 && key[0] == '0') {
+			return NULL;
+		}
+		return zend_constexpr_closure_site_by_element(ce, s, site_len, (uint32_t) rank, NULL, 0);
+	}
 
-	return zend_constexpr_closure_site_by_element(ce, s, site_len, (uint32_t) rank);
+	return zend_constexpr_closure_site_by_element(ce, s, site_len, 0, key, key_len);
 }
 
 static uint32_t zend_constexpr_closure_site_lineno(const zend_ast *site)
@@ -969,7 +1088,10 @@ ZEND_API zend_result zend_constexpr_closure_ref(zend_object *closure_obj, zend_c
 	 * Closure::fromConstExpr); the grammar is an engine detail. */
 	*id = zend_constexpr_closure_build_ref(&w);
 	if (lineno) {
-		*lineno = zend_constexpr_closure_site_lineno(w.found);
+		/* First-class callable references are keyed by name and need no line
+		 * tripwire: a name cannot drift silently. */
+		*lineno = w.found->kind == ZEND_AST_OP_ARRAY
+			? zend_constexpr_closure_site_lineno(w.found) : 0;
 	}
 	return SUCCESS;
 }
@@ -1003,7 +1125,9 @@ ZEND_METHOD(Closure, __serialize)
 	array_init(return_value);
 	add_assoc_str(return_value, "class", zend_string_copy(ce->name));
 	add_assoc_str(return_value, "id", id);
-	add_assoc_long(return_value, "line", lineno);
+	if (lineno) {
+		add_assoc_long(return_value, "line", lineno);
+	}
 }
 /* }}} */
 
@@ -1039,8 +1163,7 @@ ZEND_METHOD(Closure, __unserialize)
 		ZVAL_DEREF(z_line);
 	}
 	if (!z_class || Z_TYPE_P(z_class) != IS_STRING
-	 || !z_id || Z_TYPE_P(z_id) != IS_STRING
-	 || !z_line || Z_TYPE_P(z_line) != IS_LONG) {
+	 || !z_id || Z_TYPE_P(z_id) != IS_STRING) {
 		zend_throw_exception(NULL, "Invalid serialization data for Closure object", 0);
 		RETURN_THROWS();
 	}
@@ -1056,7 +1179,7 @@ ZEND_METHOD(Closure, __unserialize)
 	}
 
 	site = zend_constexpr_closure_site_by_ref(ce, Z_STR_P(z_id));
-	if (!site || (zend_long) zend_constexpr_closure_site_lineno(site) != Z_LVAL_P(z_line)) {
+	if (!site) {
 		zend_throw_exception_ex(NULL, 0,
 			"Invalid serialization data for Closure object (constant-expression closure \"%s\" of class %s not found)",
 			Z_STRVAL_P(z_id), ZSTR_VAL(ce->name));
@@ -1064,6 +1187,18 @@ ZEND_METHOD(Closure, __unserialize)
 	}
 
 	if (site->kind == ZEND_AST_OP_ARRAY) {
+		/* Anonymous closures are referenced by a positional rank: the start
+		 * line is the staleness tripwire. Name-keyed references carry none. */
+		if (!z_line || Z_TYPE_P(z_line) != IS_LONG) {
+			zend_throw_exception(NULL, "Invalid serialization data for Closure object", 0);
+			RETURN_THROWS();
+		}
+		if ((zend_long) zend_constexpr_closure_site_lineno(site) != Z_LVAL_P(z_line)) {
+			zend_throw_exception_ex(NULL, 0,
+				"Invalid serialization data for Closure object (constant-expression closure \"%s\" of class %s not found)",
+				Z_STRVAL_P(z_id), ZSTR_VAL(ce->name));
+			RETURN_THROWS();
+		}
 		zend_closure_init_ex(closure,
 			(zend_function *) zend_ast_get_op_array(site)->op_array, ce, ce, NULL, /* is_fake */ false);
 	} else {
