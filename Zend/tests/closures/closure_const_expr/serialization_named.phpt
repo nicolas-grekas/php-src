@@ -87,7 +87,7 @@ foreach (['$p@system', '$p@Demo::nope', '$q@Validators::check', '$p@0'] as $id) 
     }
 }
 try {
-    unserialize('O:7:"Closure":2:{s:5:"class";s:4:"Demo";s:2:"id";s:9:"$p@system";}');
+    unserialize('O:7:"Closure":2:' . substr(serialize([[], ['const-expr', ['Demo', '$p@system']]]), 4));
 } catch (Exception $e) {
     echo $e->getMessage(), "\n";
 }
@@ -101,7 +101,7 @@ string(27) "$p@Base::prot | true | true"
 string(34) "$p@Validators::check | true | true"
 string(23) "$p@strlen | true | true"
 string(27) "$p@App\helper | true | true"
-O:7:"Closure":2:{s:5:"class";s:4:"Demo";s:2:"id";s:13:"$p@Demo::priv";}
+O:7:"Closure":2:{i:0;a:0:{}i:1;a:2:{i:0;s:10:"const-expr";i:1;a:2:{i:0;s:4:"Demo";i:1;s:13:"$p@Demo::priv";}}}
 string(9) "prot-Demo"
 string(9) "prot-Base"
 string(4) "$q@0"

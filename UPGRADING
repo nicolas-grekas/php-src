@@ -187,9 +187,11 @@ PHP 8.6 UPGRADE NOTES
     unserialized. The payload contains no code: it is a reference to the
     declaration site (class name plus an element-scoped "<site>@<key>" id;
     the key is the closure's rank within the declaring element for anonymous
-    closures, checked against the recorded start line, and the name of the
-    referenced callable, e.g. "$prop@Foo::bar", for first-class callables),
-    resolved against the loaded class. Closures created at runtime, bound to
+    closures, checked against the closure's line relative to the class, and
+    the name of the referenced callable, e.g. "$prop@Foo::bar", for
+    first-class callables), resolved against the loaded class. The payload is
+    a tagged union ([<properties>, [<tag>, <reference>]]) so the format can
+    grow further reference kinds. Closures created at runtime, bound to
     an object, rebound to another scope, or declared in class constant
     values, property defaults or outside a class still refuse to serialize.
     The unserialize() allowed_classes filter applies to Closure as to any

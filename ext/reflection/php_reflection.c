@@ -1980,7 +1980,7 @@ ZEND_METHOD(ReflectionFunction, getConstExprId)
 
 	if (Z_ISUNDEF(intern->obj)
 	 || Z_OBJCE(intern->obj) != zend_ce_closure
-	 || zend_constexpr_closure_ref(Z_OBJ(intern->obj), &ce, &id, NULL) == FAILURE) {
+	 || zend_constexpr_closure_ref(Z_OBJ(intern->obj), &ce, &id, NULL, NULL) == FAILURE) {
 		RETURN_NULL();
 	}
 
@@ -2005,7 +2005,7 @@ ZEND_METHOD(ReflectionFunction, getConstExprClass)
 
 	if (Z_ISUNDEF(intern->obj)
 	 || Z_OBJCE(intern->obj) != zend_ce_closure
-	 || zend_constexpr_closure_ref(Z_OBJ(intern->obj), &ce, &id, NULL) == FAILURE) {
+	 || zend_constexpr_closure_ref(Z_OBJ(intern->obj), &ce, &id, NULL, NULL) == FAILURE) {
 		RETURN_NULL();
 	}
 

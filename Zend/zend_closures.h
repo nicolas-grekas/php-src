@@ -42,12 +42,16 @@ ZEND_API zval* zend_get_closure_this_ptr(zval *obj);
 
 /* Closures declared in constant expressions (anonymous declarations as well
  * as first-class callable references) are addressable by an element-scoped
- * reference: an opaque "<site>@<rank>" string where <site> names the declaring
- * reflection element and <rank> is the closure's position within just that
- * element (see zend_closures.c for the walk). zend_constexpr_closure_ref()
- * returns the reference (a fresh zend_string the caller owns) for a Closure
- * object, when it has one. */
-ZEND_API zend_result zend_constexpr_closure_ref(zend_object *closure_obj, zend_class_entry **ce, zend_string **id, uint32_t *lineno);
+ * reference: an opaque "<site>@<key>" string where <site> names the declaring
+ * reflection element and <key> is the closure's rank within that element (for
+ * an anonymous closure) or the referenced callable's name (for a first-class
+ * callable). zend_constexpr_closure_ref() returns the reference (a fresh
+ * zend_string the caller owns) for a Closure object, when it has one. For an
+ * anonymous closure it also sets *has_line and *lineno to the closure's line
+ * relative to the declaring class (the staleness tripwire); a first-class
+ * callable reference has no line (*has_line is false). Any out-pointer may be
+ * NULL. */
+ZEND_API zend_result zend_constexpr_closure_ref(zend_object *closure_obj, zend_class_entry **ce, zend_string **id, zend_long *lineno, bool *has_line);
 ZEND_API void zend_closure_mark_as_constexpr_fcc(zval *closure_zv, zend_class_entry *site_class);
 
 END_EXTERN_C()

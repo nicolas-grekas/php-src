@@ -1045,7 +1045,18 @@ static uint32_t zend_constexpr_closure_site_lineno(const zend_ast *site)
 	return zend_ast_get_lineno((zend_ast *) site);
 }
 
-ZEND_API zend_result zend_constexpr_closure_ref(zend_object *closure_obj, zend_class_entry **ce, zend_string **id, uint32_t *lineno)
+/* The staleness tripwire is the closure's line relative to its declaring
+ * class, not an absolute line: an edit above the class (a new use import,
+ * another declaration) shifts the class and the closure together and leaves
+ * the offset intact, so only edits between the class line and the closure
+ * trip it. The declaring class line is the one anchor every consumer can
+ * recompute, including userland polyfills through ReflectionClass. */
+static zend_long zend_constexpr_closure_rel_lineno(const zend_class_entry *ce, const zend_ast *site)
+{
+	return (zend_long) zend_constexpr_closure_site_lineno(site) - (zend_long) ce->info.user.line_start;
+}
+
+ZEND_API zend_result zend_constexpr_closure_ref(zend_object *closure_obj, zend_class_entry **ce, zend_string **id, zend_long *lineno, bool *has_line)
 {
 	const zend_closure *closure = (const zend_closure *) closure_obj;
 	zend_constexpr_closure_walk w;
@@ -1087,11 +1098,15 @@ ZEND_API zend_result zend_constexpr_closure_ref(zend_object *closure_obj, zend_c
 	 * element. Callers treat it as an opaque token (pass it to
 	 * Closure::fromConstExpr); the grammar is an engine detail. */
 	*id = zend_constexpr_closure_build_ref(&w);
+	/* Anonymous closures are keyed by rank and carry a relative-line tripwire;
+	 * first-class callable references are keyed by name and need none, since a
+	 * name cannot drift silently. */
+	if (has_line) {
+		*has_line = w.found->kind == ZEND_AST_OP_ARRAY;
+	}
 	if (lineno) {
-		/* First-class callable references are keyed by name and need no line
-		 * tripwire: a name cannot drift silently. */
 		*lineno = w.found->kind == ZEND_AST_OP_ARRAY
-			? zend_constexpr_closure_site_lineno(w.found) : 0;
+			? zend_constexpr_closure_rel_lineno(site_class, w.found) : 0;
 	}
 	return SUCCESS;
 }
@@ -1113,21 +1128,37 @@ ZEND_METHOD(Closure, __serialize)
 {
 	zend_class_entry *ce;
 	zend_string *id;
-	uint32_t lineno;
+	zend_long lineno;
+	bool has_line;
+	zval payload, tagged;
 
 	ZEND_PARSE_PARAMETERS_NONE();
 
-	if (zend_constexpr_closure_ref(Z_OBJ_P(ZEND_THIS), &ce, &id, &lineno) == FAILURE) {
+	if (zend_constexpr_closure_ref(Z_OBJ_P(ZEND_THIS), &ce, &id, &lineno, &has_line) == FAILURE) {
 		zend_throw_exception(NULL, "Serialization of 'Closure' is not allowed", 0);
 		RETURN_THROWS();
 	}
 
-	array_init(return_value);
-	add_assoc_str(return_value, "class", zend_string_copy(ce->name));
-	add_assoc_str(return_value, "id", id);
-	if (lineno) {
-		add_assoc_long(return_value, "line", lineno);
+	/* Tagged-union payload: [ <object properties>, [ <tag>, <tag payload> ] ].
+	 * A Closure has no properties, so the first slot is an empty array; the
+	 * tag names the reference kind so the format can grow new kinds without
+	 * ambiguity. The "const-expr" payload is [class, id] for a first-class
+	 * callable reference (keyed by name) and [class, id, relative-line] for
+	 * an anonymous closure (keyed by rank, line-checked). */
+	array_init_size(&payload, has_line ? 3 : 2);
+	add_next_index_str(&payload, zend_string_copy(ce->name));
+	add_next_index_str(&payload, id);
+	if (has_line) {
+		add_next_index_long(&payload, lineno);
 	}
+
+	array_init_size(&tagged, 2);
+	add_next_index_string(&tagged, "const-expr");
+	add_next_index_zval(&tagged, &payload);
+
+	array_init_size(return_value, 2);
+	add_next_index_array(return_value, zend_new_array(0));
+	add_next_index_zval(return_value, &tagged);
 }
 /* }}} */
 
@@ -1150,9 +1181,42 @@ ZEND_METHOD(Closure, __unserialize)
 		RETURN_THROWS();
 	}
 
-	z_class = zend_hash_str_find(data, ZEND_STRL("class"));
-	z_id = zend_hash_str_find(data, ZEND_STRL("id"));
-	z_line = zend_hash_str_find(data, ZEND_STRL("line"));
+	/* Tagged-union payload: [ <object properties>, [ <tag>, <tag payload> ] ].
+	 * Only the "const-expr" tag is known; an unknown tag from a future format
+	 * is rejected cleanly rather than misread. */
+	zval *z_props, *z_tagged, *z_tag, *z_payload;
+	HashTable *tagged, *payload;
+
+	z_props = zend_hash_index_find(data, 0);
+	z_tagged = zend_hash_index_find(data, 1);
+	if (zend_hash_num_elements(data) != 2 || !z_props || !z_tagged) {
+		zend_throw_exception(NULL, "Invalid serialization data for Closure object", 0);
+		RETURN_THROWS();
+	}
+	ZVAL_DEREF(z_tagged);
+	if (Z_TYPE_P(z_tagged) != IS_ARRAY) {
+		zend_throw_exception(NULL, "Invalid serialization data for Closure object", 0);
+		RETURN_THROWS();
+	}
+	tagged = Z_ARRVAL_P(z_tagged);
+	z_tag = zend_hash_index_find(tagged, 0);
+	z_payload = zend_hash_index_find(tagged, 1);
+	if (zend_hash_num_elements(tagged) != 2 || !z_tag || !z_payload) {
+		zend_throw_exception(NULL, "Invalid serialization data for Closure object", 0);
+		RETURN_THROWS();
+	}
+	ZVAL_DEREF(z_tag);
+	ZVAL_DEREF(z_payload);
+	if (Z_TYPE_P(z_tag) != IS_STRING || !zend_string_equals_literal(Z_STR_P(z_tag), "const-expr")
+	 || Z_TYPE_P(z_payload) != IS_ARRAY) {
+		zend_throw_exception(NULL, "Invalid serialization data for Closure object", 0);
+		RETURN_THROWS();
+	}
+	payload = Z_ARRVAL_P(z_payload);
+
+	z_class = zend_hash_index_find(payload, 0);
+	z_id = zend_hash_index_find(payload, 1);
+	z_line = zend_hash_index_find(payload, 2);
 	if (z_class) {
 		ZVAL_DEREF(z_class);
 	}
@@ -1187,13 +1251,14 @@ ZEND_METHOD(Closure, __unserialize)
 	}
 
 	if (site->kind == ZEND_AST_OP_ARRAY) {
-		/* Anonymous closures are referenced by a positional rank: the start
-		 * line is the staleness tripwire. Name-keyed references carry none. */
+		/* Anonymous closures are referenced by a positional rank: the relative
+		 * start line is the staleness tripwire. Name-keyed references carry
+		 * none, so a line here means a malformed payload. */
 		if (!z_line || Z_TYPE_P(z_line) != IS_LONG) {
 			zend_throw_exception(NULL, "Invalid serialization data for Closure object", 0);
 			RETURN_THROWS();
 		}
-		if ((zend_long) zend_constexpr_closure_site_lineno(site) != Z_LVAL_P(z_line)) {
+		if (zend_constexpr_closure_rel_lineno(ce, site) != Z_LVAL_P(z_line)) {
 			zend_throw_exception_ex(NULL, 0,
 				"Invalid serialization data for Closure object (constant-expression closure \"%s\" of class %s not found)",
 				Z_STRVAL_P(z_id), ZSTR_VAL(ce->name));
@@ -1202,6 +1267,11 @@ ZEND_METHOD(Closure, __unserialize)
 		zend_closure_init_ex(closure,
 			(zend_function *) zend_ast_get_op_array(site)->op_array, ce, ce, NULL, /* is_fake */ false);
 	} else {
+		/* First-class callable site: keyed by name, no line tripwire. */
+		if (z_line) {
+			zend_throw_exception(NULL, "Invalid serialization data for Closure object", 0);
+			RETURN_THROWS();
+		}
 		/* First-class callable site: re-evaluate it like attribute evaluation
 		 * would, including its visibility checks against the site class. */
 		zval tmp;
